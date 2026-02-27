@@ -7,6 +7,7 @@ Lifespan:
 
 Routers:
   • /ingest — telemetry ingestion (Phase 1)
+  • /analytics — cost insights (Phase 2A)
   • /health — shallow liveness probe
 """
 
@@ -19,6 +20,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine
+from app.routers.analytics import router as analytics_router
 from app.routers.ingest import router as ingest_router
 
 logging.basicConfig(
@@ -57,13 +59,15 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "AI Cost Management & Optimization Platform — "
-        "Phase 1: Telemetry Ingestion & Cost Attribution."
+        "Phase 1: Ingestion & Cost Attribution | "
+        "Phase 2A: Analytics APIs."
     ),
     lifespan=lifespan,
 )
 
 # Mount routers
 app.include_router(ingest_router, prefix="/ingest")
+app.include_router(analytics_router, prefix="/analytics")
 
 
 # ── Health check ────────────────────────────────────────────
