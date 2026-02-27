@@ -6,18 +6,23 @@ Flow:
   2. Hash the token (SHA-256)
   3. Look up api_keys by hash
   4. Verify is_active = true
-  5. Return the associated Project
+  5. Load associated Project
+  6. Return AuthContext (project + api_key_id)
 
 Security:
   • Generic 401 for ALL failure modes (missing, invalid, inactive)
   • Raw keys are NEVER logged
   • Hash lookup means the DB never sees the raw key
+
+Phase 3.2: Returns AuthContext dataclass instead of bare Project so that
+downstream dependencies (rate limiter) can access the api_key_id.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
@@ -38,15 +43,29 @@ _AUTH_FAILED = HTTPException(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class AuthContext:
+    """Authenticated request context injected into every protected route.
+
+    Attributes:
+        project:    The Project that owns the API key.
+        api_key_id: The specific API key UUID used for this request.
+                    Used by the rate limiter to track per-key usage.
+    """
+
+    project: Project
+    api_key_id: uuid.UUID
+
+
 async def get_current_project(
     authorization: str | None = Header(default=None, alias="Authorization"),
     session: AsyncSession = Depends(get_db_session),
-) -> Project:
+) -> AuthContext:
     """
-    FastAPI dependency — resolves Bearer token to a Project.
+    FastAPI dependency — resolves Bearer token to an AuthContext.
 
     Usage in routers:
-        CurrentProject = Annotated[Project, Depends(get_current_project)]
+        Auth = Annotated[AuthContext, Depends(get_current_project)]
 
     Raises 401 for:
       - Missing Authorization header
@@ -88,8 +107,7 @@ async def get_current_project(
     project = result.scalar_one_or_none()
 
     if project is None:
-        # Orphaned key — should not happen, but handle defensively
         logger.error("API key %s references missing project %s", api_key.id, api_key.project_id)
         raise _AUTH_FAILED
 
-    return project
+    return AuthContext(project=project, api_key_id=api_key.id)

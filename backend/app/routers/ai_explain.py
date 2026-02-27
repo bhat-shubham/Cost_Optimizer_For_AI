@@ -1,27 +1,22 @@
 """
 AI explanation router — human-readable cost insights powered by LLM.
 
-Phase 3.1: Requires authentication, scoped to project.
-
-The flow enforces strict separation:
-  1. Deterministic context builder computes ALL numbers (Python + Decimal)
-  2. LLM narrates the pre-computed facts into plain English
-  3. LLM never sees raw events, never does math
+Phase 3.2: Requires authentication AND AI-specific rate limit (RPM + RPD + AED).
+Each AI explain call consumes from the general request pool AND the AI daily cap.
 
 GET /ai/explain/daily-cost?date=YYYY-MM-DD&environment=dev
 """
 
 import datetime
 import logging
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_project
+from app.auth.dependencies import AuthContext
+from app.auth.rate_limit import enforce_ai_rate_limit
 from app.core.database import get_db_session
-from app.models.project import Project
 from app.schemas.explain import DailyCostExplanation
 from app.services.explainers import build_daily_cost_context
 from app.services.llm_client import generate_explanation
@@ -31,7 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["AI Explain"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
-CurrentProject = Annotated[Project, Depends(get_current_project)]
+Auth = Annotated[AuthContext, Depends(enforce_ai_rate_limit)]
 
 
 @router.get(
@@ -39,14 +34,14 @@ CurrentProject = Annotated[Project, Depends(get_current_project)]
     response_model=DailyCostExplanation,
     summary="AI explanation of daily cost behavior",
     description=(
-        "Fetches pre-computed cost facts from rollup tables "
-        "(scoped to the authenticated project), "
-        "then uses an LLM to generate a human-readable explanation."
+        "Fetches pre-computed cost facts (scoped to project), "
+        "then uses an LLM to narrate. "
+        "Rate limited: RPM + RPD + 20 AI explanations/day."
     ),
 )
 async def explain_daily_cost(
     session: DbSession,
-    project: CurrentProject,
+    auth: Auth,
     date: datetime.date = Query(
         ...,
         description="Target date (YYYY-MM-DD)",
@@ -66,7 +61,7 @@ async def explain_daily_cost(
 
     # ── 1. Deterministic context ────────────────────────────
     context = await build_daily_cost_context(
-        session, date, environment, project_id=project.id,
+        session, date, environment, project_id=auth.project.id,
     )
 
     if context is None:

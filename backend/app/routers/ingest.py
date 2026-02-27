@@ -2,23 +2,23 @@
 Ingestion router — the single entry point for AI usage telemetry.
 
 POST /ingest/usage
-  1. Authenticates via API key (Phase 3.1).
-  2. Validates the payload (Pydantic).
-  3. Computes total_tokens and cost_usd server-side.
-  4. Persists the event scoped to the authenticated project.
-  5. Returns the stored record with 201 Created.
+  1. Authenticates via API key.
+  2. Enforces rate limits (RPM + RPD) — Phase 3.2.
+  3. Validates the payload (Pydantic).
+  4. Computes total_tokens and cost_usd server-side.
+  5. Persists the event scoped to the authenticated project.
+  6. Returns the stored record with 201 Created.
 """
 
 import logging
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_project
+from app.auth.dependencies import AuthContext
+from app.auth.rate_limit import enforce_rate_limit
 from app.core.database import get_db_session
-from app.models.project import Project
 from app.models.usage import UsageEvent
 from app.schemas.usage import UsageEventCreate, UsageEventResponse
 from app.services.cost_calculator import calculate_cost
@@ -29,7 +29,7 @@ router = APIRouter(tags=["Ingestion"])
 
 # Type aliases for cleaner signatures
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
-CurrentProject = Annotated[Project, Depends(get_current_project)]
+Auth = Annotated[AuthContext, Depends(enforce_rate_limit)]
 
 
 @router.post(
@@ -40,13 +40,13 @@ CurrentProject = Annotated[Project, Depends(get_current_project)]
     description=(
         "Accepts a usage payload, calculates cost server-side, "
         "and persists the event as a financial-grade record "
-        "scoped to the authenticated project."
+        "scoped to the authenticated project. Rate limited."
     ),
 )
 async def ingest_usage_event(
     payload: UsageEventCreate,
     session: DbSession,
-    project: CurrentProject,
+    auth: Auth,
 ) -> UsageEvent:
     """
     Core ingestion endpoint.
@@ -85,7 +85,7 @@ async def ingest_usage_event(
         environment=payload.environment,
         user_id=payload.user_id,
         metadata_=payload.metadata,
-        project_id=project.id,  # Phase 3.1: scoped to project
+        project_id=auth.project.id,
     )
 
     # ── 4. Persist ──────────────────────────────────────────

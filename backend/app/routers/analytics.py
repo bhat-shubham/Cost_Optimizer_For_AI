@@ -1,10 +1,8 @@
 """
 Analytics router — cost insights from pre-aggregated rollup tables.
 
-Phase 3.1: All endpoints require authentication and are scoped to the
-authenticated project's data only.
-
-Decimal precision is preserved end-to-end (DB NUMERIC → Python Decimal → JSON string).
+Phase 3.2: All endpoints require authentication and are rate-limited
+(RPM + RPD). Data is scoped to the authenticated project.
 
 Endpoints:
   GET /analytics/daily-cost      — total cost per calendar day
@@ -12,16 +10,15 @@ Endpoints:
   GET /analytics/by-endpoint     — cost breakdown per application endpoint
 """
 
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_project
+from app.auth.dependencies import AuthContext
+from app.auth.rate_limit import enforce_rate_limit
 from app.core.database import get_db_session
-from app.models.project import Project
 from app.models.rollups import (
     DailyCostRollup,
     EndpointCostRollup,
@@ -32,7 +29,7 @@ from app.schemas.analytics import CostByEndpointOut, CostByModelOut, DailyCostOu
 router = APIRouter(tags=["Analytics"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
-CurrentProject = Annotated[Project, Depends(get_current_project)]
+Auth = Annotated[AuthContext, Depends(enforce_rate_limit)]
 
 
 # ── 1. Daily Cost ───────────────────────────────────────────
@@ -42,17 +39,17 @@ CurrentProject = Annotated[Project, Depends(get_current_project)]
     summary="Total cost per calendar day",
     description=(
         "Reads from daily_cost_rollups, scoped to the authenticated project. "
-        "Returns results ordered by date ascending."
+        "Rate limited."
     ),
 )
 async def get_daily_cost(
     session: DbSession,
-    project: CurrentProject,
+    auth: Auth,
 ) -> list[DailyCostOut]:
     """Reads pre-aggregated daily cost, filtered by project."""
     stmt = (
         select(DailyCostRollup)
-        .where(DailyCostRollup.project_id == project.id)
+        .where(DailyCostRollup.project_id == auth.project.id)
         .order_by(DailyCostRollup.date.asc())
     )
     result = await session.execute(stmt)
@@ -66,17 +63,18 @@ async def get_daily_cost(
     response_model=list[CostByModelOut],
     summary="Cost breakdown per AI model",
     description=(
-        "Reads from model_cost_rollups, scoped to the authenticated project."
+        "Reads from model_cost_rollups, scoped to the authenticated project. "
+        "Rate limited."
     ),
 )
 async def get_cost_by_model(
     session: DbSession,
-    project: CurrentProject,
+    auth: Auth,
 ) -> list[CostByModelOut]:
     """Reads pre-aggregated model cost, filtered by project."""
     stmt = (
         select(ModelCostRollup)
-        .where(ModelCostRollup.project_id == project.id)
+        .where(ModelCostRollup.project_id == auth.project.id)
         .order_by(ModelCostRollup.date.asc(), ModelCostRollup.model_name)
     )
     result = await session.execute(stmt)
@@ -90,17 +88,18 @@ async def get_cost_by_model(
     response_model=list[CostByEndpointOut],
     summary="Cost breakdown per application endpoint",
     description=(
-        "Reads from endpoint_cost_rollups, scoped to the authenticated project."
+        "Reads from endpoint_cost_rollups, scoped to the authenticated project. "
+        "Rate limited."
     ),
 )
 async def get_cost_by_endpoint(
     session: DbSession,
-    project: CurrentProject,
+    auth: Auth,
 ) -> list[CostByEndpointOut]:
     """Reads pre-aggregated endpoint cost, filtered by project."""
     stmt = (
         select(EndpointCostRollup)
-        .where(EndpointCostRollup.project_id == project.id)
+        .where(EndpointCostRollup.project_id == auth.project.id)
         .order_by(EndpointCostRollup.date.asc(), EndpointCostRollup.endpoint)
     )
     result = await session.execute(stmt)
