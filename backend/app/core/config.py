@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ENVIRONMENT: str = "dev"
 
+    # ── Groq LLM (Phase 2C) ────────────────────────────────
+    # API key stays server-side — never exposed to clients.
+    GROQ_API_KEY: str = ""
+    LLM_MODEL: str = "llama-3.1-8b-instant"
+
 
 # Singleton — imported everywhere as `from app.core.config import settings`
 settings = Settings()  # type: ignore[call-arg]
