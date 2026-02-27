@@ -22,6 +22,8 @@ from app.core.database import Base
 # Import all models so Base.metadata is fully populated
 import app.models.usage  # noqa: F401
 import app.models.rollups  # noqa: F401
+import app.models.project  # noqa: F401
+import app.models.api_key  # noqa: F401
 
 # ── Alembic Config object ──────────────────────────────────
 config = context.config

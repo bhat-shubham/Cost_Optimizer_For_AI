@@ -15,6 +15,7 @@ import uuid
 
 from sqlalchemy import (
     CheckConstraint,
+    ForeignKey,
     Index,
     Integer,
     Numeric,
@@ -68,6 +69,15 @@ class UsageEvent(Base):
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
     environment: Mapped[str] = mapped_column(String(10), nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # ── Project isolation (Phase 3.1) ────────────────────────
+    # Nullable for backwards compatibility with pre-auth data.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     # Column named `metadata_` to avoid shadowing Python's built-in;
     # maps to DB column `metadata`.

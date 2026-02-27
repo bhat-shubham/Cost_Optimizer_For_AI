@@ -2,21 +2,23 @@
 Ingestion router — the single entry point for AI usage telemetry.
 
 POST /ingest/usage
-  1. Validates the payload (Pydantic).
-  2. Computes total_tokens and cost_usd server-side.
-  3. Persists the event via async SQLAlchemy.
-  4. Returns the stored record with 201 Created.
-
-No auth, no rate limiting, no batching — those come in later phases.
+  1. Authenticates via API key (Phase 3.1).
+  2. Validates the payload (Pydantic).
+  3. Computes total_tokens and cost_usd server-side.
+  4. Persists the event scoped to the authenticated project.
+  5. Returns the stored record with 201 Created.
 """
 
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import get_current_project
 from app.core.database import get_db_session
+from app.models.project import Project
 from app.models.usage import UsageEvent
 from app.schemas.usage import UsageEventCreate, UsageEventResponse
 from app.services.cost_calculator import calculate_cost
@@ -25,8 +27,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Ingestion"])
 
-# Type alias for cleaner signatures
+# Type aliases for cleaner signatures
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
+CurrentProject = Annotated[Project, Depends(get_current_project)]
 
 
 @router.post(
@@ -36,18 +39,21 @@ DbSession = Annotated[AsyncSession, Depends(get_db_session)]
     summary="Ingest a single AI usage event",
     description=(
         "Accepts a usage payload, calculates cost server-side, "
-        "and persists the event as a financial-grade record."
+        "and persists the event as a financial-grade record "
+        "scoped to the authenticated project."
     ),
 )
 async def ingest_usage_event(
     payload: UsageEventCreate,
     session: DbSession,
+    project: CurrentProject,
 ) -> UsageEvent:
     """
     Core ingestion endpoint.
 
     The client NEVER supplies cost or total_tokens — those are
-    derived here to prevent manipulation.
+    derived here to prevent manipulation. The event is automatically
+    scoped to the authenticated project.
     """
 
     # ── 1. Calculate cost (service layer) ───────────────────
@@ -58,7 +64,6 @@ async def ingest_usage_event(
             output_tokens=payload.output_tokens,
         )
     except ValueError as exc:
-        # Unknown model → 422 (client can fix the request)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
@@ -80,6 +85,7 @@ async def ingest_usage_event(
         environment=payload.environment,
         user_id=payload.user_id,
         metadata_=payload.metadata,
+        project_id=project.id,  # Phase 3.1: scoped to project
     )
 
     # ── 4. Persist ──────────────────────────────────────────
@@ -89,7 +95,6 @@ async def ingest_usage_event(
         await session.refresh(event)
     except Exception:
         await session.rollback()
-        # Log the real error internally; return a generic message
         logger.exception("Failed to persist usage event")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

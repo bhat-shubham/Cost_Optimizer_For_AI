@@ -75,8 +75,8 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "AI Cost Management & Optimization Platform — "
-        "Phase 1: Ingestion | Phase 2A/2B: Analytics + Rollups | "
-        "Phase 2C: AI Explanations."
+        "Phase 1: Ingestion | Phase 2A/2B: Rollups | "
+        "Phase 2C: AI Explanations | Phase 3.1: Auth."
     ),
     lifespan=lifespan,
 )

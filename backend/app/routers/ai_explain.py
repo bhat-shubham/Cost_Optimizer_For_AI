@@ -1,6 +1,8 @@
 """
 AI explanation router — human-readable cost insights powered by LLM.
 
+Phase 3.1: Requires authentication, scoped to project.
+
 The flow enforces strict separation:
   1. Deterministic context builder computes ALL numbers (Python + Decimal)
   2. LLM narrates the pre-computed facts into plain English
@@ -11,12 +13,15 @@ GET /ai/explain/daily-cost?date=YYYY-MM-DD&environment=dev
 
 import datetime
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import get_current_project
 from app.core.database import get_db_session
+from app.models.project import Project
 from app.schemas.explain import DailyCostExplanation
 from app.services.explainers import build_daily_cost_context
 from app.services.llm_client import generate_explanation
@@ -26,6 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["AI Explain"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
+CurrentProject = Annotated[Project, Depends(get_current_project)]
 
 
 @router.get(
@@ -33,13 +39,14 @@ DbSession = Annotated[AsyncSession, Depends(get_db_session)]
     response_model=DailyCostExplanation,
     summary="AI explanation of daily cost behavior",
     description=(
-        "Fetches pre-computed cost facts from rollup tables, "
-        "then uses an LLM to generate a human-readable explanation. "
-        "All numbers are deterministic — the LLM only narrates."
+        "Fetches pre-computed cost facts from rollup tables "
+        "(scoped to the authenticated project), "
+        "then uses an LLM to generate a human-readable explanation."
     ),
 )
 async def explain_daily_cost(
     session: DbSession,
+    project: CurrentProject,
     date: datetime.date = Query(
         ...,
         description="Target date (YYYY-MM-DD)",
@@ -52,13 +59,15 @@ async def explain_daily_cost(
     ),
 ) -> DailyCostExplanation:
     """
-    1. Build deterministic context (Python math, no AI)
+    1. Build deterministic context (Python math, no AI) — scoped to project
     2. Send context to LLM for narration
     3. Return structured explanation
     """
 
     # ── 1. Deterministic context ────────────────────────────
-    context = await build_daily_cost_context(session, date, environment)
+    context = await build_daily_cost_context(
+        session, date, environment, project_id=project.id,
+    )
 
     if context is None:
         raise HTTPException(
